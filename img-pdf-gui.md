@@ -13,6 +13,7 @@
 | `~/.local/bin/img-pdf`                                                                                              | **`img-pdf`**                | Головний консольний Bash-скрипт, який виконує збирання (`img2pdf`), стиснення (`ghostscript`) та додавання метаданих (`exiftool`). |
 | `~/.local/bin/img-pdf-gui`                                                                                          | **`img-pdf-gui`**            | Графічний інтерфейс на чистому Python (PyQt6) для вибору параметрів, шляху збереження та перегляду логів у реальному часі.         |
 | `~/.local/share/kio/servicemenus/img-pdf-action.desktop`<br>*(або `~/.local/share/kxmlgui5/servicemenus/` у KDE 6)* | **`img-pdf-action.desktop`** | Контекстне меню для файлового менеджера Dolphin, що дозволяє викликати конвертацію для виділених файлів.                           |
+| `~/.local/share/applications/img-pdf-gui.desktop` | **`img-pdf-gui.desktop`** | Підтримка сістемних іконок під Wayland/KDE6 |
 
 ---
 
