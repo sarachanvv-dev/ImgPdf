@@ -1,0 +1,8 @@
+#!/usr/bin/env xdg-open
+[Desktop Entry]
+Type=Application
+Name=ImgPdf GUI
+Icon=application-pdf
+Exec=img-pdf-gui %F
+NoDisplay=true
+StartupWMClass=img-pdf-gui
