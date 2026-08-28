@@ -1,0 +1,215 @@
+#!/usr/bin/env bash
+
+# ==============================================================================
+# Назва:        img-pdf
+# Автор:        Hotabich
+# Рік:          2026
+#
+# Опис:         Автоматизований скрипт для конвертації JPG/JPEG зображень
+#               у стиснутий PDF-документ з можливістю запису метаданих.
+#
+# Використовує: `img2pdf` (збирання),
+#               `Ghostscript` (стиснення),
+#               `exiftool` (метадані),
+#               `awk` (обробка строк).
+#
+# ------------------------------------------------------------------------------
+# COPYRIGHT & LICENSE:
+#
+# Copyright (c) 2026 Hotabich
+# All rights reserved.
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom Scientific and
+# Technical research allows, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+# ==============================================================================
+
+ # Зупинити виконання при помилці
+set -euo pipefail
+
+SCRIPT_NAME=$(basename "$0")
+BASE_NAME="${SCRIPT_NAME%.*}"
+VERSION="1.3.2"
+
+DEFAULT_QUALITY="ebook"
+DEFAULT_OUTPUT="output.pdf"
+
+DEFAULT_AUTHOR="$(whoami)"
+DEFAULT_TITLE=""
+DEFAULT_SUBJECT=""
+
+QUALITY="$DEFAULT_QUALITY"
+OUTPUT="$DEFAULT_OUTPUT"
+
+AUTHOR="$DEFAULT_AUTHOR"
+TITLE="$DEFAULT_TITLE"
+SUBJECT="$DEFAULT_SUBJECT"
+
+FILES=()
+
+# --- Кольорові коди для стандартного виводу (ANSI ESCAPE SEQUENCES) ---
+GREEN=$'\033[0;32m'
+YELLOW=$'\033[1;33m'
+BLUE=$'\033[0;34m'
+CYAN=$'\033[0;36m'
+BOLD=$'\033[1m'
+BRIGHT_RED=$'\033[1;31m'
+NC=$'\033[0m' # No Color
+
+# --- Довідка та інструкція ---
+usage() {
+    echo -e "${BLUE}${BOLD}Використання:${NC} $SCRIPT_NAME [ОПЦІЇ] [ФАЙЛ1.jpg ФАЙЛ2.jpg ...]"
+    echo ""
+    echo -e "${BOLD}Опис:${NC}"
+    echo "  Конвертує зображення JPG/JPEG у стиснутий PDF-документ з додаванням метаданих."
+    echo "  Спочатку зображення об'єднуються без втрати якості через 'img2pdf' (з прапорцем"
+    echo "  --rotation=none для ігнорування збоїв EXIF), після чого підсумковий PDF"
+    echo "  стискається та підписується за допомогою 'Ghostscript' і 'exiftool'."
+    echo ""
+    echo -e "${BLUE}${BOLD}Опції:${NC}"
+    echo "  -q, --quality РІВЕНЬ    Задає профіль стиснення Ghostscript:"
+    echo "                            screen   - 72 dpi  (максимальне стиснення, низька якість)"
+    echo "                            ebook    - 150 dpi (оптимальний баланс, ЗА ЗАМОВЧУВАННЯМ)"
+    echo "                            printer  - 300 dpi (висока якість для друку)"
+    echo "                            prepress - максимальна якість із збереженням кольорів"
+    echo ""
+    echo "  -o, --output ФАЙЛ       Назва вихідного PDF-файлу (за замовчуванням: output.pdf)"
+    echo "  -a, --author ІМ'Я       Вказати автора документа в метаданих PDF (за замовчуванням: поточний користувач)"
+    echo "  -t, --title НАЗВА       Назва документа"
+    echo "  -s, --subject ТЕМА      Тема документа або його опис"
+    echo "  -v, --version           Показати версію скрипта"
+    echo "  -h, --help              Показати цю довідку"
+    echo ""
+    echo -e "${BLUE}${BOLD}Приклади:${NC}"
+    echo "  $SCRIPT_NAME"
+    echo "  $SCRIPT_NAME -o scan.pdf *.jpg"
+    echo "  $SCRIPT_NAME -a \"Іван Франко\" -q screen -o low_res.pdf page1.jpg page2.jpg"
+    echo ""
+    echo -e "${CYAN}Копірайт (c) 2026. Розповсюджується під ліцензією MIT.${NC}"
+    exit 0
+}
+
+# --- Перевірка залежностей ---
+check_dependency() {
+    local cmd="$1"
+    local pkg="$2"
+    if ! command -v "$cmd" &> /dev/null; then
+        echo -e "${BRIGHT_RED}Помилка: Необхідна утиліта '$cmd' не знайдена.${NC}" >&2
+        echo -e "${BLUE}Встановіть її через системний пакетний менеджер:${NC}" >&2
+        echo -e "${CYAN}  sudo pacman -S $pkg${NC}" >&2
+        exit 69
+    fi
+}
+
+check_dependency "img2pdf" "img2pdf"
+check_dependency "gs" "ghostscript"
+check_dependency "awk" "gawk"
+
+CLEAN_NAME=$(echo "$BASE_NAME" | awk -F- '{for(i=1;i<=NF;i++) printf toupper(substr($i,1,1)) substr($i,2)}')
+
+# --- Парсинг аргументів ---
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -q|--quality)
+            QUALITY="$2"
+            shift 2
+            ;;
+        -o|--output)
+            OUTPUT="$2"
+            shift 2
+            ;;
+        -a|--author)
+            AUTHOR="$2"
+            shift 2
+            ;;
+        -t|--title)
+            TITLE="$2"
+            shift 2
+            ;;
+        -s|--subject)
+            SUBJECT="$2"
+            shift 2
+            ;;
+        -v|--version)
+            echo -e "${BLUE}$SCRIPT_NAME версія $VERSION${NC}"
+            echo -e "${CYAN}Копірайт (c) 2026. Ліцензія MIT.${NC}"
+            exit 0
+            ;;
+        -h|--help)
+            usage
+            ;;
+        *)
+            FILES+=("$1")
+            shift
+            ;;
+    esac
+done
+
+# Якщо файли не вказані списком, шукаємо всі JPG/JPEG у поточній папці
+if [ ${#FILES[@]} -eq 0 ]; then
+    shopt -s nullglob
+    FILES=(*.jpg *.jpeg *.JPG *.JPEG *.png *.PNG)
+    shopt -u nullglob
+fi
+
+if [ ${#FILES[@]} -eq 0 ]; then
+    echo -e "${BRIGHT_RED}Помилка: Не вказано файлів і не знайдено зображень *.jpg / *.jpeg у поточній директорії.${NC}" >&2
+    exit 1
+fi
+
+# Створення тимчасового файлу
+TEMP_PDF=$(mktemp --suffix=.pdf)
+
+# Автоматичне видалення тимчасового файлу при виході чи помилці
+cleanup() {
+    rm -f "$TEMP_PDF"
+}
+trap cleanup EXIT
+
+# --- [1/3] Збирання img2pdf ---
+echo -e "${BLUE}--------------------------------------------------${NC}"
+echo -e "${BLUE}[1/3] Збирання ${#FILES[@]} зображень у тимчасовий PDF (img2pdf)...${NC}"
+img2pdf --rotation=none "${FILES[@]}" -o "$TEMP_PDF" 2>/dev/null || {
+    echo -e "${BRIGHT_RED}Помилка під час збирання зображень через img2pdf.${NC}" >&2
+    exit 1
+}
+
+# --- [2/3] Стиснення Ghostscript (запис Author та Creator) ---
+echo "${BLUE}[2/3] Оптимізація (Ghostscript, профіль: '$QUALITY', Автор: '$AUTHOR')...${NC}"
+gs -sDEVICE=pdfwrite \
+   -dCompatibilityLevel=1.4 \
+   -dPDFSETTINGS="/$QUALITY" \
+   -dNOPAUSE \
+   -dBATCH \
+   -sOutputFile="$OUTPUT" \
+   "$TEMP_PDF" > /dev/null
+
+# --- [3/3] Зміна Producer через exiftool ---
+echo -e "${BLUE}[3/3] Запис метаданих Producer...${NC}"
+if command -v exiftool $> /dev/null; then
+    exiftool -Author="$AUTHOR" \
+             -Title="$TITLE" \
+             -Subject="$SUBJECT" \
+             -Creator="$CLEAN_NAME" \
+             -Producer="$CLEAN_NAME v$VERSION" \
+             -overwrite_original "$OUTPUT" > /dev/null
+else
+    echo -e "${YELLOW}Попередження: 'exiftool' не встановлено, метадані залишено за замовчуванням.${NC}" >&2
+fi
+
+echo -e "${GREEN} Успішно створено файл: $OUTPUT${NC}"
+echo -e "${BLUE}--------------------------------------------------${NC}"
