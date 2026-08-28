@@ -1,0 +1,256 @@
+#!/usr/bin/env python3
+"""
+img-pdf-gui - Графічна обгортка (GUI) на PyQt6 для консольного інструменту img-pdf.
+
+Copyright (c) 2026 Hotabich
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Цей модуль надає повноцінний графічний інтерфейс користувача для автоматизації
+процесу упаковки та оптимізації зображень у PDF-документи під керуванням Linux.
+
+Основні можливості:
+- Інтеграція з Wayland / KDE Plasma 6 (правильна прив'язка іконки через .desktop).
+- Графічний діалог вибору параметрів стиснення та метаданих PDF.
+- Нативний діалог вибору шляху збереження вихідного файлу.
+- Асинхронний виклик консольної утиліти обробки в окремому потоці (QThread).
+- Консольне вікно виводу логів у реальному часі з підтримкою ANSI-кольорової підсвічування (HTML).
+
+Залежності:
+- Python 3.x
+- PyQt6
+- Утиліта 'img-pdf' у системному PATH
+
+Автор: hotabich
+Версія: 1.2.1 (Чистий Python / PyQt6)
+Ліцензія: MIT License
+"""
+
+import sys
+import os
+import re
+import html
+import subprocess
+from PyQt6.QtWidgets import (
+    QApplication, QWidget, QDialog, QFormLayout, QLineEdit,
+    QComboBox, QDialogButtonBox, QFileDialog, QVBoxLayout,
+    QTextEdit, QPushButton, QLabel
+)
+from PyQt6.QtGui import QIcon
+from PyQt6.QtCore import QThread, pyqtSignal, Qt
+
+# Константа копірайту для використання в GUI
+COPYRIGHT_TEXT = "Copyright © 2026 Hotabich. MIT License."
+
+
+def ansi_to_html(text: str) -> str:
+    """
+    Конвертує текст із послідовностями ANSI Escape-кодів (кольори термінала Bash) у форматований HTML.
+
+    Параметри:
+        text (str): Вхідний текстовий рядок, що містить ANSI-коди кольорів.
+
+    Повертає:
+        str: Форматований рядок HTML із тегами <span style="color: ...">.
+    """
+    text = html.escape(text)
+
+    ansi_colors = {
+        "30": "#000000", "31": "#ff5555", "32": "#50fa7b", "33": "#f1fa8c",
+        "34": "#8be9fd", "35": "#ff79c6", "36": "#8be9fd", "37": "#f8f8f2",
+        "1;31": "#ff6e6e", "1;32": "#69ff94", "1;33": "#ffffa5", "1;34": "#a4ffff"
+    }
+
+    text = re.sub(r"\033\[0?m", "</span>", text)
+
+    def repl(m):
+        code = m.group(1)
+        color = ansi_colors.get(code, "#00ff66")
+        return f'<span style="color: {color}; font-weight: bold;">'
+
+    text = re.sub(r"\033\[([0-9;]+)m", repl, text)
+    text = text.replace("\n", "<br>")
+    return text
+
+
+class ConfigDialog(QDialog):
+    """
+    Діалогове вікно первинного налаштування параметрів конвертації та відображення копірайту.
+    """
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Налаштування PDF")
+        self.setWindowIcon(QIcon.fromTheme("application-pdf"))
+
+        layout = QFormLayout(self)
+
+        self.q_combo = QComboBox()
+        self.q_combo.addItems(["ebook", "screen", "printer", "prepress"])
+
+        default_user = os.getenv("USER", "user")
+        self.a_input = QLineEdit(default_user)
+        self.t_input = QLineEdit("")
+        self.s_input = QLineEdit("")
+
+        layout.addRow("Якість:", self.q_combo)
+        layout.addRow("Автор:", self.a_input)
+        layout.addRow("Назва:", self.t_input)
+        layout.addRow("Тема:", self.s_input)
+
+        # Блок копірайту внизу форми
+        copyright_label = QLabel(COPYRIGHT_TEXT)
+        copyright_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        copyright_label.setStyleSheet("color: #7f8c8d; font-size: 11px; margin-top: 5px;")
+        layout.addRow(copyright_label)
+
+        bbox = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        bbox.accepted.connect(self.accept)
+        bbox.rejected.connect(self.reject)
+        layout.addRow(bbox)
+
+    def get_data(self) -> tuple:
+        """Повертає кортеж значень (quality, author, title, subject)."""
+        return (
+            self.q_combo.currentText(),
+            self.a_input.text(),
+            self.t_input.text(),
+            self.s_input.text()
+        )
+
+
+class RunnerThread(QThread):
+    """
+    Фоновий робочий потік для виконання утиліти `img-pdf`.
+    """
+    log_signal = pyqtSignal(str)
+    done_signal = pyqtSignal(int)
+
+    def __init__(self, cmd: list):
+        super().__init__()
+        self.cmd = cmd
+
+    def run(self):
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
+
+        proc = subprocess.Popen(
+            self.cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            env=env
+        )
+
+        for line in proc.stdout:
+            self.log_signal.emit(line)
+
+        proc.wait()
+        self.done_signal.emit(proc.returncode)
+
+
+class TerminalWindow(QWidget):
+    """
+    Графічна консоль відображення перебігу створення PDF.
+    """
+    def __init__(self, cmd: list):
+        super().__init__()
+        self.setWindowTitle("Консоль створення PDF")
+        self.setWindowIcon(QIcon.fromTheme("application-pdf"))
+        self.resize(650, 420)
+
+        layout = QVBoxLayout(self)
+
+        self.console = QTextEdit()
+        self.console.setReadOnly(True)
+        self.console.setStyleSheet("""
+            QTextEdit {
+                background-color: #1e1e2e;
+                color: #d9e0ee;
+                font-family: "Monospace", "Courier New", monospace;
+                font-size: 13px;
+                border: 1px solid #302d41;
+                padding: 8px;
+            }
+        """)
+        layout.addWidget(self.console)
+
+        self.btn_close = QPushButton("Закрити")
+        self.btn_close.setEnabled(False)
+        self.btn_close.clicked.connect(self.close)
+        layout.addWidget(self.btn_close)
+
+        self.thread = RunnerThread(cmd)
+        self.thread.log_signal.connect(self.append_log)
+        self.thread.done_signal.connect(self.on_finished)
+        self.thread.start()
+
+    def append_log(self, text: str):
+        html_text = ansi_to_html(text)
+        self.console.insertHtml(html_text)
+        self.console.ensureCursorVisible()
+
+    def on_finished(self, code: int):
+        if code == 0:
+            self.console.insertHtml('<br><span style="color: #50fa7b; font-weight: bold;">&gt;&gt;&gt; [УСПІХ] PDF успішно згенеровано!</span><br>')
+        else:
+            self.console.insertHtml(f'<br><span style="color: #ff5555; font-weight: bold;">&gt;&gt;&gt; [ПОМИЛКА] Процес завершився з кодом: {code}</span><br>')
+        self.btn_close.setEnabled(True)
+
+
+def main():
+    app = QApplication(sys.argv)
+    app.setDesktopFileName("img-pdf-gui")
+
+    cfg_dlg = ConfigDialog()
+    if cfg_dlg.exec() != QDialog.DialogCode.Accepted:
+        sys.exit(0)
+
+    quality, author, title, subject = cfg_dlg.get_data()
+
+    default_path = os.path.expanduser("~/output.pdf")
+    output_path, _ = QFileDialog.getSaveFileName(
+        None,
+        "Зберегти PDF",
+        default_path,
+        "PDF документы (*.pdf)"
+    )
+
+    if not output_path:
+        sys.exit(0)
+
+    input_files = sys.argv[1:]
+
+    cmd = [
+        "img-pdf",
+        "-q", quality,
+        "-o", output_path,
+        "-a", author,
+        "-t", title,
+        "-s", subject
+    ] + input_files
+
+    term_win = TerminalWindow(cmd)
+    term_win.show()
+
+    sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    main()
