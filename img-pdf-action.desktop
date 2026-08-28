@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Service
+MimeType=image/jpeg;image/png;
+Actions=imgPdfConvert;
+X-KDE-Priority=TopLevel
+
+[Desktop Action imgPdfConvert]
+Name=Сконвертувати в PDF (img-pdf)...
+Name[uk]=Сконвертувати в PDF (img-pdf)...
+Icon=application-pdf
+Exec=img-pdf-gui %U
