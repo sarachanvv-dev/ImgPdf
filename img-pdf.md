@@ -42,8 +42,8 @@ sudo apt install img2pdf ghostscript
 Зробіть файл виконуваним і перемістіть у системну директорію, щоб викликати його з будь-якого місця системи:
 
 ```Bash
-chmod +x img2compressedpdf
-sudo mv img2compressedpdf /usr/local/bin/
+chmod +x img-pdf
+sudo mv img-pdf /usr/local/bin/
 ```
 
 
@@ -51,7 +51,7 @@ sudo mv img2compressedpdf /usr/local/bin/
 
 
 ```Bash
-img2compressedpdf [-q quality] [-o output.pdf] [файл1.jpg файл2.jpg ...]
+img-pdf [-q quality] [-o output.pdf] [файл1.jpg файл2.jpg ...]
 ```
 
 
@@ -60,11 +60,11 @@ img2compressedpdf [-q quality] [-o output.pdf] [файл1.jpg файл2.jpg ...]
 
 | Ключ  | Повна назва | Опис                                             | За замовчуванням |
 | :---: | :---------- | :----------------------------------------------- | :--------------- |
-| `-o`	| `--output`  | Шлях/назва вихідного `.pdf` файлу                | `output.pdf`     |
-| `-q`	| `--quality` | Рівень якості та стиснення Ghostscript           | `ebook`          |
+| `-o`  | `--output`  | Шлях/назва вихідного `.pdf` файлу                | `output.pdf`     |
+| `-q`  | `--quality` | Рівень якості та стиснення Ghostscript           | `ebook`          |
 | `-a`  | `--author`  | Записує значення автора у метадані PDF (/Author) | `username`       |
-| `-h`	| `--help`    | Вивести коротку інструкцію та завершити роботу   | —                |
-| `-v`	| `--version` | Вивести версію скрипта                           | —                |
+| `-h`  | `--help`    | Вивести коротку інструкцію та завершити роботу   | —                |
+| `-v`  | `--version` | Вивести версію скрипта                           | —                |
 
 
 
@@ -85,7 +85,7 @@ img2compressedpdf [-q quality] [-o output.pdf] [файл1.jpg файл2.jpg ...]
 
     * Використання: Для читання з моніторів, планшетів, надсилання поштою чи в месенджерах.
 
-3. p`rinter` (~300 dpi):
+3. `printer` (~300 dpi):
 
     * Призначення: Висока якість з деталізацією.
 
@@ -105,29 +105,29 @@ img2compressedpdf [-q quality] [-o output.pdf] [файл1.jpg файл2.jpg ...]
 (Створить `output.pdf` із профілем `ebook`)
 
 ```Bash
-img2compressedpdf
+img-pdf
 ```
 
 2. Конвертувати всі зображення і задати власну назву:
 
 ```Bash
-img2compressedpdf -o passport_scans.pdf *.jpg
+img-pdf -o passport_scans.pdf *.jpg
 ```
 
 3. Максимальне стиснення для надсилання поштою (профіль `screen`):
 
 ```Bash
-img2compressedpdf -q screen -o low_size_doc.pdf *.jpg
+img-pdf -q screen -o low_size_doc.pdf *.jpg
 ```
 
 4. Вибір конкретних файлів та чіткого порядку сторінок:
 
 ```Bash
-img2compressedpdf -o report.pdf cover.jpg page1.jpg page2.jpg appendix.jpg
+img-pdf -o report.pdf cover.jpg page1.jpg page2.jpg appendix.jpg
 ```
 
 5. Висока якість для друку (профіль `printer`):
 
 ```Bash
-img2compressedpdf -q printer -o print_ready.pdf *.jpg
+img-pdf -q printer -o print_ready.pdf *.jpg
 ```
