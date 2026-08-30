@@ -199,7 +199,7 @@ gs -sDEVICE=pdfwrite \
    "$TEMP_PDF" > /dev/null
 
 # --- [3/3] Зміна Producer через exiftool ---
-echo -e "${BLUE}[3/3] Запис метаданих Producer...${NC}"
+echo -e "${BLUE}[3/3] Запис метаданих...${NC}"
 if command -v exiftool $> /dev/null; then
     exiftool -Author="$AUTHOR" \
              -Title="$TITLE" \
