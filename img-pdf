@@ -1,215 +1,554 @@
 #!/usr/bin/env bash
-
 # ==============================================================================
-# Назва:        img-pdf
-# Автор:        Hotabich
-# Рік:          2026
-#
-# Опис:         Автоматизований скрипт для конвертації JPG/JPEG зображень
-#               у стиснутий PDF-документ з можливістю запису метаданих.
-#
-# Використовує: `img2pdf` (збирання),
-#               `Ghostscript` (стиснення),
-#               `exiftool` (метадані),
-#               `awk` (обробка строк).
-#
-# ------------------------------------------------------------------------------
-# COPYRIGHT & LICENSE:
-#
-# Copyright (c) 2026 Hotabich
-# All rights reserved.
-#
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom Scientific and
-# Technical research allows, subject to the following conditions:
-#
-# The above copyright notice and this permission notice shall be included in all
-# copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-# SOFTWARE.
+#  file: img-pdf
+#  description: Конвертує зображення JPG/JPEG/PNG у стиснутий PDF-документ
+#               з додаванням метаданих.
+#  author: Hotabich
+#  copyright © 2026 Hotabich.
+#  license: MIT License
+#  version: 2.7.1
 # ==============================================================================
+#  MIT LICENSE:
+#
+#  Permission is hereby granted, free of charge, to any person obtaining a copy
+#  of this software and associated documentation files (the "Software"), to deal
+#  in the Software without restriction, including without limitation the rights
+#  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+#  copies of the Software, and to permit persons to whom Scientific and
+#  Technical research allows, subject to the following conditions:
+#
+#  The above copyright notice and this permission notice shall be included in all
+#  copies or substantial portions of the Software.
+#
+#  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+#  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+#  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+#  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+#  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+#  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+#  SOFTWARE.
+# ==============================================================================
+# 
+####
+# Використання:
+#     img-pdf [ОПЦІЇ] [ФАЙЛ1.jpg ФАЙЛ2.jpg ...]
+# 
+# Опис:
+#     Конвертує зображення JPG/JPEG/PNG у стиснутий PDF-документ з додаванням метаданих.
+# 
+#     Спочатку зображення об'єднуються без втрати якості через 'img2pdf' (з прапорцем --rotation=none для ігнорування збоїв EXIF), після чого підсумковий PDF стискається та підписується за допомогою 'Ghostscript' та 'exiftool'.
+# 
+# Опції:
+#     -q, --quality РІВЕНЬ
+#                           Задає профіль стиснення Ghostscript:
+#                   screen
+#                           72 dpi  (максимальне стиснення, низька якість)
+#                   ebook
+#                           150 dpi (оптимальний баланс, ЗА ЗАМОВЧУВАННЯМ)
+#                   printer
+#                           300 dpi (висока якість для друку)
+#                   prepress
+#                           максимальна якість із збереженням кольорів
+# 
+#     -o, --output ФАЙЛ
+#                           Назва вихідного PDF-файлу
+#     -a, --author ІМ'Я
+#                           Вказати автора документа в метаданих
+#     -t, --title НАЗВА
+#                           Назва документа
+#     -s, --subject ТЕМА
+#                           Тема документа або його опис
+#     -v, --version
+#                           Показати версію скрипта
+#     -h, --help
+#                           Показати цю довідку
+# 
+# Приклади:
+#     img-pdf
+#     img-pdf -o scan.pdf *.jpg
+#     img-pdf -a "Тарас Шевченко" -q screen -o low_res.pdf page1.jpg page2.jpg
+# 
+###
+# Автор: Hotabich | Copyright (c) 2026. Розповсюджується під ліцензією MIT.
+# 
+#####
 
- # Зупинити виконання при помилці
+# Строгий режим виконання (Strict Mode):
+#   -e             зупиняти скрипт при будь-якій помилці виконання команд
+#   -u             вважати помилкою використання неоголошених змінних
+#   -o pipefail    повертати код помилки, якщо хоча б одна команда в пайпі (|) впала
 set -euo pipefail
 
-SCRIPT_NAME=$(basename "$0")
+# ==============================================================================
+#  1. ГЛОБАЛЬНІ ЗМІННІ ТА НАЛАШТУВАННЯ
+# ==============================================================================
+
+# Отримання надійного канонічного шляху до скрипту (працює і для symlinks)
+SCRIPT_PATH="$(realpath -- "$0" 2>/dev/null || readlink -f -- "$0")"
+SCRIPT_NAME="$(basename -- "${SCRIPT_PATH}")"
+
+# Шлях до тимчасового PDF-файлу (ініціалізується при обробці)
+TEMP_PDF=""
+
+# Динамічне зчитування версії з шапки скрипту
+VERSION="$(sed -nE '/^[[:space:]]*#[[:space:]]*[Vv]ersion:/ { s/.*:[[:space:]]*//; p; q; }' "${SCRIPT_PATH}")"
+VERSION="${VERSION:-1.0.0}" # Значення за замовчуванням, якщо версію не знайдено
+
+# Зчитування автора розробника з шапки скрипту
+AUTHOR_FROM_HEADER="$(sed -nE '/^[[:space:]]*#[[:space:]]*[Aa]uthor:/ { s/.*:[[:space:]]*//; p; q; }' "${SCRIPT_PATH}")"
+
+# Базова назва скрипту без розширення
 BASE_NAME="${SCRIPT_NAME%.*}"
-VERSION="1.3.2"
 
-DEFAULT_QUALITY="ebook"
-DEFAULT_OUTPUT="output.pdf"
+# convert_to_pascal_case: convert_to_pascal_case [input]
+#     Перетворює kebab-case / snake-case у PascalCase (Clean Name)
+#     без використання зовнішніх утиліт (Bash 4+).
+# 
+#     Параметри:
+#       input     Вхідний рядок у kebab-case / snake-case / dot.case
+# 
+#     Повертає:
+#       Рядок у PascalCase
+convert_to_pascal_case() {
+    local input="$1"
+    local result=""
 
-DEFAULT_AUTHOR="$(whoami)"
-DEFAULT_TITLE=""
-DEFAULT_SUBJECT=""
-
-QUALITY="$DEFAULT_QUALITY"
-OUTPUT="$DEFAULT_OUTPUT"
-
-AUTHOR="$DEFAULT_AUTHOR"
-TITLE="$DEFAULT_TITLE"
-SUBJECT="$DEFAULT_SUBJECT"
-
-FILES=()
-
-# --- Кольорові коди для стандартного виводу (ANSI ESCAPE SEQUENCES) ---
-GREEN=$'\033[0;32m'
-YELLOW=$'\033[1;33m'
-BLUE=$'\033[0;34m'
-CYAN=$'\033[0;36m'
-BOLD=$'\033[1m'
-BRIGHT_RED=$'\033[1;31m'
-NC=$'\033[0m' # No Color
-
-# --- Довідка та інструкція ---
-usage() {
-    echo -e "${BLUE}${BOLD}Використання:${NC} $SCRIPT_NAME [ОПЦІЇ] [ФАЙЛ1.jpg ФАЙЛ2.jpg ...]"
-    echo ""
-    echo -e "${BOLD}Опис:${NC}"
-    echo "  Конвертує зображення JPG/JPEG у стиснутий PDF-документ з додаванням метаданих."
-    echo "  Спочатку зображення об'єднуються без втрати якості через 'img2pdf' (з прапорцем"
-    echo "  --rotation=none для ігнорування збоїв EXIF), після чого підсумковий PDF"
-    echo "  стискається та підписується за допомогою 'Ghostscript' і 'exiftool'."
-    echo ""
-    echo -e "${BLUE}${BOLD}Опції:${NC}"
-    echo "  -q, --quality РІВЕНЬ    Задає профіль стиснення Ghostscript:"
-    echo "                            screen   - 72 dpi  (максимальне стиснення, низька якість)"
-    echo "                            ebook    - 150 dpi (оптимальний баланс, ЗА ЗАМОВЧУВАННЯМ)"
-    echo "                            printer  - 300 dpi (висока якість для друку)"
-    echo "                            prepress - максимальна якість із збереженням кольорів"
-    echo ""
-    echo "  -o, --output ФАЙЛ       Назва вихідного PDF-файлу (за замовчуванням: output.pdf)"
-    echo "  -a, --author ІМ'Я       Вказати автора документа в метаданих PDF (за замовчуванням: поточний користувач)"
-    echo "  -t, --title НАЗВА       Назва документа"
-    echo "  -s, --subject ТЕМА      Тема документа або його опис"
-    echo "  -v, --version           Показати версію скрипта"
-    echo "  -h, --help              Показати цю довідку"
-    echo ""
-    echo -e "${BLUE}${BOLD}Приклади:${NC}"
-    echo "  $SCRIPT_NAME"
-    echo "  $SCRIPT_NAME -o scan.pdf *.jpg"
-    echo "  $SCRIPT_NAME -a \"Іван Франко\" -q screen -o low_res.pdf page1.jpg page2.jpg"
-    echo ""
-    echo -e "${CYAN}Копірайт (c) 2026. Розповсюджується під ліцензією MIT.${NC}"
-    exit 0
+    # Використовуємо пробіл, дефіс, підкреслення та крапку як роздільники
+    local IFS=' -_.'
+    for word in $input; do
+        # ${word^} піднімає першу літеру слова у верхній регістр (Bash 4+)
+        result="${result}${word^}"
+    done
+    echo "$result"
 }
 
-# --- Перевірка залежностей ---
-check_dependency() {
-    local cmd="$1"
-    local pkg="$2"
-    if ! command -v "$cmd" &> /dev/null; then
-        echo -e "${BRIGHT_RED}Помилка: Необхідна утиліта '$cmd' не знайдена.${NC}" >&2
-        echo -e "${BLUE}Встановіть її через системний пакетний менеджер:${NC}" >&2
-        echo -e "${CYAN}  sudo pacman -S $pkg${NC}" >&2
-        exit 69
+CLEAN_NAME="$(convert_to_pascal_case "${BASE_NAME}")"
+
+# --- Значення за замовчуванням ---
+DEFAULT_QUALITY="ebook"
+DEFAULT_OUTPUT="output.pdf"
+DEFAULT_AUTHOR="${AUTHOR_FROM_HEADER:-${USER:-$(id -un)}}"
+DEFAULT_TITLE="${CLEAN_NAME}"
+DEFAULT_SUBJECT=""
+
+# --- Змінні конфігурації (можуть бути перевизначені аргументами CLI) ---
+QUALITY="${DEFAULT_QUALITY}"
+OUTPUT="${DEFAULT_OUTPUT}"
+AUTHOR="${DEFAULT_AUTHOR}"
+TITLE="${DEFAULT_TITLE}"
+SUBJECT="${DEFAULT_SUBJECT}"
+
+# Масив для накопичення переліку вхідних файлів
+FILES=()
+
+# ==============================================================================
+#  2. ПАЛІТРА КОЛЬОРІВ ТА СТИЛІВ ANSI
+# ==============================================================================
+
+# Перевіряємо, чи підтримує термінал кольори (і чи не вимкнено їх через NO_COLOR)
+if [[ -t 1 ]] && [[ -z "${NO_COLOR:-}" ]] && [[ "${TERM:-}" != "dumb" ]]; then
+    # Основні акцентні кольори
+    GREEN=$'\e[0;32m'          # Зелений: успішні операції ([OK])
+    YELLOW=$'\e[1;33m'         # Жовтий: попередження ([WARN])
+    BLUE=$'\e[0;34m'           # Синій: інформаційні повідомлення ([INFO])
+    CYAN=$'\e[0;36m'           # Блакитний: шляхи до файлів та ключові параметри
+    BRIGHT_RED=$'\e[1;31m'     # Червоний: помилки та аварійні зупинки ([ERROR])
+
+    # Стилі шрифту
+    BOLD=$'\e[1m'              # Жирний шрифт
+
+    # Сірі відтінки для другорядного виводу
+    DARK_GREY=$'\e[38;5;238m'  # Темно-сірий
+    MUTED_GREY=$'\e[38;5;242m' # Приглушений сірий (для авторів/копірайтів)
+    GREY=$'\e[1;30m'           # Стандартний темно-сірий
+    LIGHT_GREY=$'\e[0;37m'     # Світло-сірий
+    DIM_GREY=$'\e[2;37m'       # Текст зі зниженою яскравістю
+
+    # Скидання форматування
+    NC=$'\e[0m'                # No Color
+else
+    GREEN=""
+    YELLOW=""
+    BLUE=""
+    CYAN=""
+    BRIGHT_RED=""
+    BOLD=""
+    DARK_GREY=""
+    MUTED_GREY=""
+    GREY=""
+    LIGHT_GREY=""
+    DIM_GREY=""
+    NC=""
+fi
+
+# ==============================================================================
+#  3. ОЧИЩЕННЯ ТА ЛОГУВАННЯ
+# ==============================================================================
+
+# cleanup: cleanup
+#     Автоматично видаляє тимчасовий PDF-файл при виході зі скрипту
+#     або перериванні (Ctrl+C).
+cleanup() {
+    if [[ -n "${TEMP_PDF:-}" && -f "${TEMP_PDF:-}" ]]; then
+        rm -f "${TEMP_PDF}"
     fi
 }
 
-check_dependency "img2pdf" "img2pdf"
-check_dependency "gs" "ghostscript"
-check_dependency "awk" "gawk"
+trap cleanup EXIT INT TERM
 
-CLEAN_NAME=$(echo "$BASE_NAME" | awk -F- '{for(i=1;i<=NF;i++) printf toupper(substr($i,1,1)) substr($i,2)}')
+# log_info: log_info [message]
+#     Виводить інформаційне повідомлення у стандартний вивід.
+log_info()    { echo -e "${BLUE}[INFO]${NC} $*"; }
 
-# --- Парсинг аргументів ---
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        -q|--quality)
-            QUALITY="$2"
-            shift 2
-            ;;
-        -o|--output)
-            OUTPUT="$2"
-            shift 2
-            ;;
-        -a|--author)
-            AUTHOR="$2"
-            shift 2
-            ;;
-        -t|--title)
-            TITLE="$2"
-            shift 2
-            ;;
-        -s|--subject)
-            SUBJECT="$2"
-            shift 2
-            ;;
-        -v|--version)
-            echo -e "${BLUE}$SCRIPT_NAME версія $VERSION${NC}"
-            echo -e "${CYAN}Копірайт (c) 2026. Ліцензія MIT.${NC}"
-            exit 0
-            ;;
-        -h|--help)
-            usage
-            ;;
-        *)
-            FILES+=("$1")
-            shift
-            ;;
-    esac
-done
+# log_success: log_success [message]
+#     Виводить повідомлення про успішне виконання.
+log_success() { echo -e "${GREEN}[OK]${NC} $*"; }
 
-# Якщо файли не вказані списком, шукаємо всі JPG/JPEG у поточній папці
-if [ ${#FILES[@]} -eq 0 ]; then
-    shopt -s nullglob
-    FILES=(*.jpg *.jpeg *.JPG *.JPEG *.png *.PNG)
-    shopt -u nullglob
-fi
+# log_warn: log_warn [message]
+#     Виводить попередження у потік помилок (stderr).
+log_warn()    { echo -e "${YELLOW}[WARN]${NC} $*" >&2; }
 
-if [ ${#FILES[@]} -eq 0 ]; then
-    echo -e "${BRIGHT_RED}Помилка: Не вказано файлів і не знайдено зображень *.jpg / *.jpeg у поточній директорії.${NC}" >&2
-    exit 1
-fi
+# log_error: log_error [message]
+#     Виводить повідомлення про помилку у потік помилок (stderr).
+log_error()   { echo -e "${BRIGHT_RED}[ERROR]${NC} $*" >&2; }
 
-# Створення тимчасового файлу
-TEMP_PDF=$(mktemp --suffix=.pdf)
+# ==============================================================================
+#  4. СЛУЖБОВІ ФУНКЦІЇ CLI (HELP / VERSION)
+# ==============================================================================
 
-# Автоматичне видалення тимчасового файлу при виході чи помилці
-cleanup() {
-    rm -f "$TEMP_PDF"
-}
-trap cleanup EXIT
+# show_help: show_help
+#     Витягує, форматує та виводить довідку з блоку коментарів скрипту.
+show_help() {
+    local cols
+    cols=$(tput cols 2>/dev/null || echo 80)
 
-# --- [1/3] Збирання img2pdf ---
-echo -e "${BLUE}--------------------------------------------------${NC}"
-echo -e "${BLUE}[1/3] Збирання ${#FILES[@]} зображень у тимчасовий PDF (img2pdf)...${NC}"
-img2pdf --rotation=none "${FILES[@]}" -o "$TEMP_PDF" 2>/dev/null || {
-    echo -e "${BRIGHT_RED}Помилка під час збирання зображень через img2pdf.${NC}" >&2
-    exit 1
+    # Зчитуємо блок між #### та ###, адаптуємо відступи та переноси під ширину екрану
+    sed -ne '/^####$/,/^###$/p' "${SCRIPT_PATH}" | sed '1d;$d; s/^#[ ]\?//' | awk -v max_w="$cols" '
+    {
+        if (length($0) <= max_w) {
+            print $0
+            next
+        }
+
+        match($0, /^[ \t]*/)
+        indent = substr($0, RSTART, RLENGTH)
+        text = substr($0, RLENGTH + 1)
+        
+        eff_w = max_w - length(indent)
+        if (eff_w < 15) eff_w = 15
+
+        n = split(text, words, " ")
+        line = ""
+        for (i = 1; i <= n; i++) {
+            if (line == "") {
+                line = words[i]
+            } else if (length(line) + 1 + length(words[i]) <= eff_w) {
+                line = line " " words[i]
+            } else {
+                print indent line
+                line = words[i]
+            }
+        }
+        if (line != "") {
+            print indent line
+        }
+    }' >&2
+
+    exit 0
 }
 
-# --- [2/3] Стиснення Ghostscript (запис Author та Creator) ---
-echo "${BLUE}[2/3] Оптимізація (Ghostscript, профіль: '$QUALITY', Автор: '$AUTHOR')...${NC}"
-gs -sDEVICE=pdfwrite \
-   -dCompatibilityLevel=1.4 \
-   -dPDFSETTINGS="/$QUALITY" \
-   -dNOPAUSE \
-   -dBATCH \
-   -sOutputFile="$OUTPUT" \
-   "$TEMP_PDF" > /dev/null
+# show_version: show_version
+#     Виводить назву, версію та автора скрипта (якщо вказано в шапці).
+show_version() {
+    local script_title="${SCRIPT_NAME}"
 
-# --- [3/3] Зміна Producer через exiftool ---
-echo -e "${BLUE}[3/3] Запис метаданих...${NC}"
-if command -v exiftool $> /dev/null; then
-    exiftool -Author="$AUTHOR" \
-             -Title="$TITLE" \
-             -Subject="$SUBJECT" \
-             -Creator="$CLEAN_NAME" \
-             -Producer="$CLEAN_NAME v$VERSION" \
-             -overwrite_original "$OUTPUT" > /dev/null
-else
-    echo -e "${YELLOW}Попередження: 'exiftool' не встановлено, метадані залишено за замовчуванням.${NC}" >&2
-fi
+    printf "%s v%s\n" "${script_title}" "${VERSION}"
+    
+    if [[ -n "${AUTHOR_FROM_HEADER:-}" ]]; then
+        printf "%sАвтор: %s%s\n" "${MUTED_GREY}" "${AUTHOR_FROM_HEADER}" "${NC}"
+    fi
 
-echo -e "${GREEN} Успішно створено файл: $OUTPUT${NC}"
-echo -e "${BLUE}--------------------------------------------------${NC}"
+    exit 0
+}
+
+# ==============================================================================
+#  5. ПЕРЕВІРКА ЗАЛЕЖНОСТЕЙ ТА АНАЛІЗ АРГУМЕНТІВ
+# ==============================================================================
+
+# check_dependency: check_dependency [cmd] [pkg]
+#     Перевіряє наявність утиліти в системі. У разі відсутності виводить
+#     динамічну підказку для встановлення через пакетний менеджер OS.
+# 
+#     Параметри:
+#       cmd       Назва команди для перевірки.
+#       pkg       Назва системного пакета (за замовчуванням дорівнює cmd).
+check_dependency() {
+    local cmd="$1"
+    local pkg="${2:-$1}"
+
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        log_error "Необхідна утиліта '$cmd' не знайдена в системі."
+
+        if command -v pacman >/dev/null 2>&1; then
+            log_warn "Встановіть її через pacman: sudo pacman -S $pkg"
+        elif command -v apt-get >/dev/null 2>&1; then
+            log_warn "Встановіть її через apt: sudo apt install $pkg"
+        elif command -v brew >/dev/null 2>&1; then
+            log_warn "Встановіть її через brew: brew install $pkg"
+        else
+            log_warn "Будь ласка, встановіть пакет '$pkg' через ваш системний пакетний менеджер."
+        fi
+
+        exit 1
+    fi
+}
+
+# check_all_dependencies: check_all_dependencies
+#     Валідує наявність усіх обов'язкових інструментів для роботи скрипту.
+check_all_dependencies() {
+    check_dependency "img2pdf" "img2pdf"
+    check_dependency "gs" "ghostscript"
+    check_dependency "awk" "gawk"
+}
+
+# parse_args: parse_args "$@"
+#     Здійснює розбір аргументів командного рядка (підтримує коротку,
+#     довгу нотацію, синтаксис -opt=val та роздільник '--').
+# 
+#     Параметри:
+#       $@        Всі аргументи, передані скрипту.
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -q|--quality)
+                if [[ -z "${2:-}" || "${2:-}" == -* ]]; then
+                    log_error "Опція '$1' вимагає вказання значення."
+                    log_info "Дозволені значення: screen, ebook, printer, prepress"
+                    exit 1
+                fi
+                case "$2" in
+                    screen|ebook|printer|prepress)
+                        QUALITY="$2"
+                        ;;
+                    *)
+                        log_error "Неприпустимий рівень якості '$2'."
+                        log_info "Дозволені значення: screen, ebook, printer, prepress"
+                        exit 1
+                        ;;
+                esac
+                shift 2
+                ;;
+            --quality=*)
+                local val="${1#*=}"
+                case "$val" in
+                    screen|ebook|printer|prepress)
+                        QUALITY="$val"
+                        ;;
+                    *)
+                        log_error "Неприпустимий рівень якості '$val'."
+                        log_info "Дозволені значення: screen, ebook, printer, prepress"
+                        exit 1
+                        ;;
+                esac
+                shift
+                ;;
+            -o|--output)
+                if [[ -z "${2:-}" || "${2:-}" == -* ]]; then
+                    log_error "Опція '$1' вимагає вказання шляху до файлу."
+                    exit 1
+                fi
+                OUTPUT="$2"
+                shift 2
+                ;;
+            --output=*)
+                OUTPUT="${1#*=}"
+                shift
+                ;;
+            -a|--author)
+                if [[ -z "${2:-}" ]]; then
+                    log_error "Опція '$1' вимагає вказання імені автора."
+                    exit 1
+                fi
+                AUTHOR="$2"
+                shift 2
+                ;;
+            --author=*)
+                AUTHOR="${1#*=}"
+                shift
+                ;;
+            -t|--title)
+                if [[ -z "${2:-}" ]]; then
+                    log_error "Опція '$1' вимагає вказання заголовка."
+                    exit 1
+                fi
+                TITLE="$2"
+                shift 2
+                ;;
+            --title=*)
+                TITLE="${1#*=}"
+                shift
+                ;;
+            -s|--subject)
+                if [[ -z "${2:-}" ]]; then
+                    log_error "Опція '$1' вимагає вказання теми."
+                    exit 1
+                fi
+                SUBJECT="$2"
+                shift 2
+                ;;
+            --subject=*)
+                SUBJECT="${1#*=}"
+                shift
+                ;;
+            -v|--version)
+                show_version
+                ;;
+            -h|--help)
+                show_help
+                ;;
+            --)
+                shift
+                while [[ $# -gt 0 ]]; do
+                    FILES+=("$1")
+                    shift
+                done
+                break
+                ;;
+            -*)
+                log_error "Невідома опція: '$1'"
+                log_info "Запустіть з -h або --help для отримання довідки."
+                exit 1
+                ;;
+            *)
+                FILES+=("$1")
+                shift
+                ;;
+        esac
+    done
+}
+
+# ==============================================================================
+#  6. ВАЛІДАЦІЯ ТА ОБРОБКА ФАЙЛІВ
+# ==============================================================================
+
+# validate_input_files: validate_input_files
+#     Перевіряє наявність переданих файлів. Якщо масив порожній, виконує
+#     автоматичний пошук підтримних зображень у поточній директорії.
+validate_input_files() {
+    # 1. Автоматичний пошук, якщо файли не вказані явно
+    if [[ ${#FILES[@]} -eq 0 ]]; then
+        log_warn "Вхідні файли не вказано. Шукаю зображення у поточній директорії..."
+        
+        shopt -s nullglob nocaseglob
+        FILES=( *.jpg *.jpeg *.png *.webp *.tiff *.bmp )
+        shopt -u nullglob nocaseglob
+
+        if [[ ${#FILES[@]} -eq 0 ]]; then
+            log_error "Не знайдено жодного зображення (.jpg, .png тощо) у поточній папці."
+            log_info "Використання: ${SCRIPT_NAME} [ОПЦІЇ] file1.jpg file2.png ..."
+            log_info "Запустіть з -h або --help для отримання повної довідки."
+            exit 1
+        fi
+
+        log_info "Знайдено зображень: ${#FILES[@]}"
+    fi
+
+    # 2. Перевірка наявності кожного файлу
+    local missing_files=0
+    for file in "${FILES[@]}"; do
+        if [[ ! -f "$file" ]]; then
+            log_error "Файл не знайдено: '$file'"
+            missing_files=$((missing_files + 1))
+        fi
+    done
+
+    if [[ $missing_files -gt 0 ]]; then
+        log_error "Перевірку не пройдено: $missing_files файл(ів) відсутні."
+        exit 1
+    fi
+}
+
+# process_images: process_images
+#     Виконує покрокову конвеєрну обробку:
+#       1. Об'єднання зображень у тимчасовий PDF (img2pdf).
+#       2. Стиснення та оптимізація через Ghostscript.
+#       3. Запис метаданих документа через ExifTool.
+process_images() {
+    TEMP_PDF="$(mktemp --suffix=.pdf)"
+
+    # [1/3] Збирання зображень у тимчасовий PDF
+    log_info "[1/3] Збирання зображень у тимчасовий PDF (img2pdf)..."
+    img2pdf --rotation=none "${FILES[@]}" -o "${TEMP_PDF}" 2>/dev/null || {
+        log_error "Не вдалося зібрати зображення через img2pdf."
+        exit 1
+    }
+
+    # [2/3] Оптимізація PDF через Ghostscript
+    log_info "[2/3] Оптимізація (Ghostscript, профіль: '${QUALITY}')..."
+    gs -sDEVICE=pdfwrite \
+       -dCompatibilityLevel=1.4 \
+       -dPDFSETTINGS="/${QUALITY}" \
+       -dNOPAUSE \
+       -dBATCH \
+       -sOutputFile="${OUTPUT}" \
+       "${TEMP_PDF}" > /dev/null 2>&1 || {
+        log_error "Помилка при оптимізації PDF через Ghostscript."
+        exit 1
+    }
+
+    # [3/3] Запис метаданих через exiftool
+    log_info "[3/3] Запис метаданих..."
+    if command -v exiftool >/dev/null 2>&1; then
+        exiftool -Author="${AUTHOR}" \
+                 -Title="${TITLE:-}" \
+                 -Subject="${SUBJECT:-}" \
+                 -Creator="${CLEAN_NAME}" \
+                 -Producer="${CLEAN_NAME} v${VERSION}" \
+                 -overwrite_original "${OUTPUT}" > /dev/null 2>&1
+    else
+        log_warn "'exiftool' не встановлено в системі, метадані залишено за замовчуванням."
+    fi
+
+    log_info "Готово! Вихідний файл успішно створено: ${CYAN}${OUTPUT}${NC}"
+}
+
+# ==============================================================================
+#  7. ГОЛОВНА ФУНКЦІЯ ТА ТОЧКА ВХОДУ (MAIN)
+# ==============================================================================
+
+# main: main "$@"
+#     Організовує порядок виконання інструменту:
+#       Парсинг CLI -> Залежності -> Вхідні файли -> Звіт -> Конвертація.
+main() {
+    # 1. Розбір прапорців та аргументів CLI
+    parse_args "$@"
+
+    # 2. Перевірка наявності системних утиліт
+    check_all_dependencies
+
+    # 3. Перевірка наявності та валідності джерел зображень
+    validate_input_files
+
+    # 4. Форматований звіт конфігурації запуску
+    log_info "Запуск обробки:"
+    {
+        echo "  • Вхідних файлів:;${#FILES[@]}"
+        echo "  • Вихідний файл:;${CYAN}${OUTPUT}${NC}"
+        echo "  • Якість (Quality):;${QUALITY}"
+        echo "  • Автор:;${AUTHOR}"
+        if [[ -n "${TITLE:-}" ]]; then
+            echo "  • Заголовок:;${TITLE}"
+        fi
+        if [[ -n "${SUBJECT:-}" ]]; then
+            echo "  • Тема:;${SUBJECT}"
+        fi
+    } | column -t -s ';'
+
+    # 5. Виконання конвертації
+    log_info "Починаю конвертацію..."
+    process_images
+
+    log_success "Конвертацію успішно завершено! Файл: ${CYAN}${OUTPUT}${NC}"
+}
+
+main "$@"
